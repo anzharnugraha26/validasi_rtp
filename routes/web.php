@@ -22,6 +22,8 @@ Route::controller(HistoryController::class)->group(function(){
     Route::get('log_download', 'download');
 });
 
+
+
 Auth::routes();
 
 Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
