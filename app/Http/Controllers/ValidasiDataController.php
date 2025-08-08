@@ -224,13 +224,26 @@ class ValidasiDataController extends Controller
         $headers = $sheet1[0] ?? [];
         unset($sheet1[0], $sheet2[0]);
 
-        $convertRows = function ($sheet) use ($headers) {
+        // Cari header kolom SIM ID secara fleksibel
+        $simIdHeader = collect($headers)->first(function ($h) {
+            return strtolower(str_replace(' ', '', trim($h))) === 'simid'
+                || strtolower(str_replace(' ', '', trim($h))) === 'simid_bpr';
+        });
+
+        if (!$simIdHeader) {
+            return response()->json([
+                'message' => 'Kolom SIM ID tidak ditemukan di file pertama'
+            ], 400);
+        }
+
+        // Fungsi konversi
+        $convertRows = function ($sheet) use ($headers, $simIdHeader) {
             return collect($sheet)
                 ->filter(fn($row) => collect($row)->filter()->isNotEmpty())
-                ->mapWithKeys(function ($row) use ($headers) {
+                ->mapWithKeys(function ($row) use ($headers, $simIdHeader) {
                     $row = array_pad($row, count($headers), null);
                     $assoc = array_combine($headers, $row);
-                    $key = $assoc['SIMID_BPR'] ?? uniqid();
+                    $key = $assoc[$simIdHeader] ?? uniqid(); // Hanya uniqid jika benar-benar kosong
                     return [$key => $assoc];
                 });
         };
@@ -275,7 +288,7 @@ class ValidasiDataController extends Controller
                     $logs[] = [
                         'id_validasi' => $id,
                         'aksi' => 'validasi_dijalankan',
-                        'deskripsi' => "Perbedaan ditemukan di kolom {$key}, SIMID_BPR: {$simid}",
+                        'deskripsi' => "Perbedaan ditemukan di kolom {$key}, SIM ID: {$simid}",
                         'file1' => $value1,
                         'file2' => $value2,
                         'parameter' => $key,
@@ -299,14 +312,18 @@ class ValidasiDataController extends Controller
             'total_file2' => number_format($record->total_2, 0, '.', ''),
             'differences' => [] // bisa dikosongkan jika takut overload
         ]);
+
     }
 
     public function result($id){
         ini_set('memory_limit', '2048M'); // 2 GB cukup untuk > 500rb baris
         set_time_limit(600);             // 10 menit
         $validasi = ValidasiData::where('id' , $id)->first();
-        $filename = $validasi->client . '_result.xlsx';
-        return Excel::download(new ValidasiExport($id), $filename);
+        $data = ValidasiDataDetail::where('id_validasi' , $id)->get();
+        return view('pages.report' , compact('data' , 'validasi'));
+
+        // $filename = $validasi->client . '_result.xlsx';
+        // return Excel::download(new ValidasiExport($id), $filename);
     }
 
 
