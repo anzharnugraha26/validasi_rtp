@@ -206,114 +206,146 @@ class ValidasiDataController extends Controller
         ]);
     }
 
-    public function updateValidasi(Request $request)
-    {
-       $id = $request->id;
-        $record = ValidasiData::findOrFail($id);
+   public function updateValidasi(Request $request)
+{
+    $id = $request->id;
+    $record = ValidasiData::findOrFail($id);
 
-        // Hapus data sebelumnya
-        ValidasiDataDetail::where('id_validasi', $id)->delete();
-        ValidasiLog::where('id_validasi', $id)->where('aksi', 'validasi_dijalankan')->delete();
+    // Hapus data sebelumnya
+    ValidasiDataDetail::where('id_validasi', $id)->delete();
+    ValidasiLog::where('id_validasi', $id)->where('aksi', 'validasi_dijalankan')->delete();
 
-        $file1Path = storage_path('app/temp_validasi/' . $record->temp_file1);
-        $file2Path = storage_path('app/temp_validasi/' . $record->temp_file2);
+    $file1Path = storage_path('app/temp_validasi/' . $record->temp_file1);
+    $file2Path = storage_path('app/temp_validasi/' . $record->temp_file2);
 
-        $sheet1 = Excel::toArray([], $file1Path)[0] ?? [];
-        $sheet2 = Excel::toArray([], $file2Path)[0] ?? [];
+    $sheet1 = Excel::toArray([], $file1Path)[0] ?? [];
+    $sheet2 = Excel::toArray([], $file2Path)[0] ?? [];
 
-        $headers = $sheet1[0] ?? [];
-        unset($sheet1[0], $sheet2[0]);
+    $headers1 = $sheet1[0] ?? [];
+    $headers2 = $sheet2[0] ?? [];
+    unset($sheet1[0], $sheet2[0]);
 
-        // Cari header kolom SIM ID secara fleksibel
-        $simIdHeader = collect($headers)->first(function ($h) {
-            return strtolower(str_replace(' ', '', trim($h))) === 'simid'
-                || strtolower(str_replace(' ', '', trim($h))) === 'simid_bpr';
-        });
+    // Cari header kolom SIM ID secara fleksibel
+    $normalizeHeader = fn($h) => strtolower(str_replace(' ', '', trim($h)));
 
-        if (!$simIdHeader) {
-            return response()->json([
-                'message' => 'Kolom SIM ID tidak ditemukan di file pertama'
-            ], 400);
+    $simIdHeader = collect($headers1)->first(function ($h) use ($normalizeHeader) {
+        $norm = $normalizeHeader($h);
+        return $norm === 'simid' || $norm === 'simid_bpr';
+    });
+
+    if (!$simIdHeader) {
+        return response()->json([
+            'message' => 'Kolom SIM ID tidak ditemukan di file pertama'
+        ], 400);
+    }
+
+    // Mapping header file2 ke header file1 berdasarkan nama kolom
+    $mapHeaders2 = [];
+    foreach ($headers2 as $i => $h2) {
+        $norm2 = $normalizeHeader($h2);
+        $matchIndex = collect($headers1)->search(fn($h1) => $normalizeHeader($h1) === $norm2);
+        if ($matchIndex !== false) {
+            $mapHeaders2[$i] = $headers1[$matchIndex];
         }
+    }
 
-        // Fungsi konversi
-        $convertRows = function ($sheet) use ($headers, $simIdHeader) {
-            return collect($sheet)
-                ->filter(fn($row) => collect($row)->filter()->isNotEmpty())
-                ->mapWithKeys(function ($row) use ($headers, $simIdHeader) {
-                    $row = array_pad($row, count($headers), null);
-                    $assoc = array_combine($headers, $row);
-                    $key = $assoc[$simIdHeader] ?? uniqid(); // Hanya uniqid jika benar-benar kosong
-                    return [$key => $assoc];
-                });
-        };
+    // Konversi baris sheet1
+    $convertRows1 = function ($sheet) use ($headers1, $simIdHeader) {
+        return collect($sheet)
+            ->filter(fn($row) => collect($row)->filter()->isNotEmpty())
+            ->mapWithKeys(function ($row) use ($headers1, $simIdHeader) {
+                $row = array_pad($row, count($headers1), null);
+                $assoc = array_combine($headers1, $row);
+                $key = $assoc[$simIdHeader] ?? uniqid();
+                return [$key => $assoc];
+            });
+    };
 
-        $data1 = $convertRows($sheet1);
-        $data2 = $convertRows($sheet2);
-
-        $allSimids = $data1->keys()->merge($data2->keys())->unique();
-
-        $differences = [];
-        $logs = [];
-
-        foreach ($allSimids as $simid) {
-            $row1 = $data1->get($simid, []);
-            $row2 = $data2->get($simid, []);
-
-            foreach ($row1 as $key => $value1) {
-                $value2 = $row2[$key] ?? null;
-
-                $normalized1 = trim((string) ($value1 ?? ''));
-                $normalized2 = trim((string) ($value2 ?? ''));
-
-                $isDifferent = false;
-
-                if (is_numeric($normalized1) && is_numeric($normalized2)) {
-                    $isDifferent = round((float)$normalized1, 0) !== round((float)$normalized2, 0);
-                } else {
-                    $isDifferent = strtolower($normalized1) !== strtolower($normalized2);
+    // Konversi baris sheet2 pakai mapping header
+    $convertRows2 = function ($sheet) use ($mapHeaders2, $simIdHeader) {
+        return collect($sheet)
+            ->filter(fn($row) => collect($row)->filter()->isNotEmpty())
+            ->mapWithKeys(function ($row) use ($mapHeaders2, $simIdHeader) {
+                $assoc = [];
+                foreach ($row as $i => $val) {
+                    if (isset($mapHeaders2[$i])) {
+                        $assoc[$mapHeaders2[$i]] = $val;
+                    }
                 }
+                $key = $assoc[$simIdHeader] ?? uniqid();
+                return [$key => $assoc];
+            });
+    };
 
-                if ($isDifferent) {
-                    $differences[] = [
-                        'id_validasi' => $id,
-                        'sim_id' => $simid,
-                        'parameter' => $key,
-                        'file1' => $value1,
-                        'file2' => $value2,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
+    $data1 = $convertRows1($sheet1);
+    $data2 = $convertRows2($sheet2);
 
-                    $logs[] = [
-                        'id_validasi' => $id,
-                        'aksi' => 'validasi_dijalankan',
-                        'deskripsi' => "Perbedaan ditemukan di kolom {$key}, SIM ID: {$simid}",
-                        'file1' => $value1,
-                        'file2' => $value2,
-                        'parameter' => $key,
-                        'sim_id' => $simid,
-                        'oleh' => auth()->user()->name ?? request()->ip(),
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
-                }
+    $allSimids = $data1->keys()->merge($data2->keys())->unique();
+
+    $differences = [];
+    $logs = [];
+
+    foreach ($allSimids as $simid) {
+        $row1 = $data1->get($simid, []);
+        $row2 = $data2->get($simid, []);
+
+        foreach ($row1 as $key => $value1) {
+            $value2 = $row2[$key] ?? null;
+
+            $normalized1 = trim((string) ($value1 ?? ''));
+            $normalized2 = trim((string) ($value2 ?? ''));
+
+            $isDifferent = false;
+
+            if (is_numeric($normalized1) && is_numeric($normalized2)) {
+                $isDifferent = round((float)$normalized1, 0) !== round((float)$normalized2, 0);
+            } else {
+                $isDifferent = strtolower($normalized1) !== strtolower($normalized2);
+            }
+
+            if ($isDifferent) {
+                $differences[] = [
+                    'id_validasi' => $id,
+                    'sim_id' => $simid,
+                    'parameter' => $key,
+                    'file1' => $value1,
+                    'file2' => $value2,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+
+                $logs[] = [
+                    'id_validasi' => $id,
+                    'client' =>$record->client,
+                    'title' =>$record->title,
+                    'created_date' => $record->create_by,
+                    'aksi' => 'validasi_dijalankan',
+                    'deskripsi' => "Perbedaan ditemukan di kolom {$key}, SIM ID: {$simid}",
+                    'file1' => $value1,
+                    'file2' => $value2,
+                    'parameter' => $key,
+                    'sim_id' => $simid,
+                    'oleh' => auth()->user()->name ?? request()->ip(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
             }
         }
-
-        // Insert chunked
-        collect($differences)->chunk(1000)->each(fn($chunk) => ValidasiDataDetail::insert($chunk->toArray()));
-        collect($logs)->chunk(1000)->each(fn($chunk) => ValidasiLog::insert($chunk->toArray()));
-
-        return response()->json([
-            'message' => 'Validasi berhasil',
-            'total_perbedaan' => count($differences),
-            'total_file1' => number_format($record->total_1, 0, '.', ''),
-            'total_file2' => number_format($record->total_2, 0, '.', ''),
-            'differences' => [] // bisa dikosongkan jika takut overload
-        ]);
-
     }
+
+    // Insert chunked
+    collect($differences)->chunk(1000)->each(fn($chunk) => ValidasiDataDetail::insert($chunk->toArray()));
+    collect($logs)->chunk(1000)->each(fn($chunk) => ValidasiLog::insert($chunk->toArray()));
+
+    return response()->json([
+        'message' => 'Validasi berhasil',
+        'total_perbedaan' => count($differences),
+        'total_file1' => number_format($record->total_1, 0, '.', ''),
+        'total_file2' => number_format($record->total_2, 0, '.', ''),
+        'differences' => [] // bisa dikosongkan jika takut overload
+    ]);
+}
+
 
     public function result($id){
         ini_set('memory_limit', '2048M'); // 2 GB cukup untuk > 500rb baris

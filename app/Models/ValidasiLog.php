@@ -18,5 +18,8 @@ class ValidasiLog extends Model
         'parameter', // kolom yang dibandingkan
         'sim_id',  // simid terkait
         'oleh',
+        'client' ,
+        'title'  ,
+        'created_date' ,
     ];
 }

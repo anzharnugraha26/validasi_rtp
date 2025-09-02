@@ -14,7 +14,7 @@ class HistoryController extends Controller
         if ($request->ajax()) {
             $data = DB::table('validasi_logs as a')
             ->leftJoin('validasi_data as b' , 'a.id_validasi' , '=' , 'b.id')
-            ->select('a.created_at' , 'b.client' , 'b.title' , 'b.create_by' , 'a.sim_id' , 'a.parameter' , 'a.file1' , 'a.file2' )
+            ->select('a.created_at' , 'a.client' , 'a.title' , 'a.created_date as create_by' , 'a.sim_id' , 'a.parameter' , 'a.file1' , 'a.file2' )
             ->orderBy('a.id' , 'desc');
 
             if ($request->start_date) {
@@ -26,7 +26,7 @@ class HistoryController extends Controller
             }
 
             if ($request->client_filter) {
-                $data->where('b.client', 'like', '%' . $request->client_filter . '%');
+                $data->where('a.client', 'like', '%' . $request->client_filter . '%');
             }
 
             return DataTables::of($data)
