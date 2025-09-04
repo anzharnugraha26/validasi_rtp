@@ -298,18 +298,21 @@ class ValidasiDataController extends Controller
             $isDifferent = false;
 
             if (is_numeric($normalized1) && is_numeric($normalized2)) {
-                $isDifferent = round((float)$normalized1, 0) !== round((float)$normalized2, 0);
+                $isDifferent = round((float)$normalized1, 0 ) !== round((float)$normalized2, 0);
             } else {
                 $isDifferent = strtolower($normalized1) !== strtolower($normalized2);
             }
 
             if ($isDifferent) {
+                 $file1Value = is_numeric($value1) ? round((float)$value1, 0) : $value1;
+                 $file2Value = is_numeric($value2) ? round((float)$value2, 0) : $value2;
+
                 $differences[] = [
                     'id_validasi' => $id,
                     'sim_id' => $simid,
                     'parameter' => $key,
-                    'file1' => $value1,
-                    'file2' => $value2,
+                    'file1' => $file1Value,
+                    'file2' => $file2Value,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ];
@@ -321,8 +324,8 @@ class ValidasiDataController extends Controller
                     'created_date' => $record->create_by,
                     'aksi' => 'validasi_dijalankan',
                     'deskripsi' => "Perbedaan ditemukan di kolom {$key}, SIM ID: {$simid}",
-                    'file1' => $value1,
-                    'file2' => $value2,
+                    'file1' => $file1Value,
+                    'file2' => $file2Value,
                     'parameter' => $key,
                     'sim_id' => $simid,
                     'oleh' => auth()->user()->name ?? request()->ip(),
